@@ -1,6 +1,27 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { 
+  DndContext, 
+  closestCenter, 
+  KeyboardSensor, 
+  PointerSensor, 
+  useSensor, 
+  useSensors,
+  DragEndEvent,
+  TouchSensor,
+  MouseSensor,
+  DragOverlay,
+  defaultDropAnimationSideEffects
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { ProcessItem, ProcessSection, InventoryItem } from '../types';
 import { Icons, getProductLabel } from '../constants';
 
@@ -30,25 +51,25 @@ const ScrollableText = ({ text, className }: { text: string; className?: string 
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (!isOverflowing || !containerRef.current) return;
+    // 只有當點擊的是文字區域且不是在拖拽時才處理
     setIsDragging(true);
     setStartX(e.pageX - containerRef.current.offsetLeft);
     setScrollLeft(containerRef.current.scrollLeft);
-    containerRef.current.setPointerCapture(e.pointerId);
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
     if (!isDragging || !containerRef.current) return;
-    e.preventDefault();
     const x = e.pageX - containerRef.current.offsetLeft;
     const walk = (x - startX) * 2;
-    containerRef.current.scrollLeft = scrollLeft - walk;
+    if (Math.abs(walk) > 5) {
+      e.preventDefault();
+      e.stopPropagation(); // 阻止拖拽感應器
+      containerRef.current.scrollLeft = scrollLeft - walk;
+    }
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
     setIsDragging(false);
-    if (containerRef.current) {
-      containerRef.current.releasePointerCapture(e.pointerId);
-    }
   };
 
   return (
@@ -272,7 +293,71 @@ const ProcessCard = ({ item, section, onTransferClick, onPutClick, onUpdate, onU
   );
 };
 
+const SortableProcessCard = (props: any) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: props.item.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 100 : undefined,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="relative group">
+      <div {...attributes} {...listeners} className="touch-none">
+        <ProcessCard {...props} />
+      </div>
+    </div>
+  );
+};
+
 export const ProcessView: React.FC<Props> = ({ subView, items, inventory, onUpdateItems, onMoveItem, onInventoryPut, onDeleteItem, onDeleteInventory }) => {
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  // DnD Sensors
+  const sensors = useSensors(
+    useSensor(MouseSensor, {
+      activationConstraint: {
+        delay: 250,
+        tolerance: 5,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 300, // 手機端稍微增加延遲以防誤觸
+        tolerance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragStart = (event: any) => {
+    setActiveId(event.active.id);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveId(null);
+
+    if (over && active.id !== over.id) {
+      onUpdateItems((prevItems: ProcessItem[]) => {
+        const oldIndex = prevItems.findIndex((item) => item.id === active.id);
+        const newIndex = prevItems.findIndex((item) => item.id === over.id);
+        return arrayMove(prevItems, oldIndex, newIndex);
+      });
+    }
+  };
+
   // Modal 狀態管理
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [transferModalOpen, setTransferModalOpen] = useState(false);
@@ -436,22 +521,64 @@ export const ProcessView: React.FC<Props> = ({ subView, items, inventory, onUpda
             </div>
             
             <div className="flex-1 overflow-y-auto space-y-4 pr-2 scrollbar-hide">
-              {sectionItems.map(item => (
-                <ProcessCard 
-                  key={item.id} 
-                  item={item} 
-                  section={sec.key}
-                  onTransferClick={handleTransferClick}
-                  onPutClick={handlePutClick}
-                  onDelete={onDeleteItem}
-                  onUpdate={(newQty: number) => onUpdateItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, quantity: newQty } : pi))}
-                  onUpdateNote={(newNote: string) => onUpdateItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, note: newNote } : pi))}
-                  onUpdateFormula={(newFormula: string, newTotal: number) => onUpdateItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, formula: newFormula, quantity: newTotal } : pi))}
-                  onTogglePreparing={(isPrep: boolean) => onUpdateItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, isPreparing: isPrep } : pi))}
-                  onOpenDateSelector={handleOpenDateSelector}
-                  inventory={inventory}
-                />
-              ))}
+              <DndContext 
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+                onDragCancel={() => setActiveId(null)}
+              >
+                <SortableContext 
+                  items={sectionItems.map(i => i.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {sectionItems.map(item => (
+                    <SortableProcessCard 
+                      key={item.id} 
+                      item={item} 
+                      section={sec.key}
+                      onTransferClick={handleTransferClick}
+                      onPutClick={handlePutClick}
+                      onDelete={onDeleteItem}
+                      onUpdate={(newQty: number) => onUpdateItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, quantity: newQty } : pi))}
+                      onUpdateNote={(newNote: string) => onUpdateItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, note: newNote } : pi))}
+                      onUpdateFormula={(newFormula: string, newTotal: number) => onUpdateItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, formula: newFormula, quantity: newTotal } : pi))}
+                      onTogglePreparing={(isPrep: boolean) => onUpdateItems(prev => prev.map(pi => pi.id === item.id ? { ...pi, isPreparing: isPrep } : pi))}
+                      onOpenDateSelector={handleOpenDateSelector}
+                      inventory={inventory}
+                    />
+                  ))}
+                </SortableContext>
+
+                <DragOverlay dropAnimation={{
+                  sideEffects: defaultDropAnimationSideEffects({
+                    styles: {
+                      active: {
+                        opacity: '0.5',
+                      },
+                    },
+                  }),
+                }}>
+                  {activeId ? (
+                    <div className="w-full opacity-90 scale-105 shadow-2xl">
+                      <ProcessCard 
+                        item={items.find(i => i.id === activeId)} 
+                        section={items.find(i => i.id === activeId)?.section}
+                        inventory={inventory}
+                        // 預覽不需要事件
+                        onTransferClick={() => {}}
+                        onPutClick={() => {}}
+                        onDelete={() => {}}
+                        onUpdate={() => {}}
+                        onUpdateNote={() => {}}
+                        onUpdateFormula={() => {}}
+                        onTogglePreparing={() => {}}
+                        onOpenDateSelector={() => {}}
+                      />
+                    </div>
+                  ) : null}
+                </DragOverlay>
+              </DndContext>
               {sectionItems.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20 opacity-20 border-2 border-dashed border-slate-800 rounded-[32px]">
                   <p className="text-xs font-black uppercase tracking-widest">目前無待處理項</p>
