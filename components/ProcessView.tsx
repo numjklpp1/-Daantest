@@ -12,7 +12,8 @@ import {
   TouchSensor,
   MouseSensor,
   DragOverlay,
-  defaultDropAnimationSideEffects
+  defaultDropAnimationSideEffects,
+  DragStartEvent
 } from '@dnd-kit/core';
 import {
   arrayMove,
@@ -22,6 +23,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { restrictToVerticalAxis, restrictToWindowEdges } from '@dnd-kit/modifiers';
 import { ProcessItem, ProcessSection, InventoryItem } from '../types';
 import { Icons, getProductLabel } from '../constants';
 
@@ -102,7 +104,7 @@ interface Props {
   onDeleteInventory: (id: string) => void;
 }
 
-const ProcessCard = ({ item, section, onTransferClick, onPutClick, onUpdate, onUpdateNote, onUpdateFormula, onTogglePreparing, onDelete, inventory, onOpenDateSelector }: any) => {
+const ProcessCard = ({ item, section, onTransferClick, onPutClick, onUpdate, onUpdateNote, onUpdateFormula, onTogglePreparing, onDelete, inventory, onOpenDateSelector, isDragging }: any) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const total = item.quantity;
@@ -145,9 +147,11 @@ const ProcessCard = ({ item, section, onTransferClick, onPutClick, onUpdate, onU
 
   return (
     <div className={`p-3 border-2 rounded-2xl shadow-sm flex flex-col gap-2 group transition-all ${
-      item.isPreparing 
-        ? 'bg-rose-950/40 border-rose-600/50 hover:border-rose-500' 
-        : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+      isDragging
+        ? 'bg-blue-600/10 border-blue-400 shadow-xl shadow-blue-500/20 scale-[1.02]'
+        : item.isPreparing 
+          ? 'bg-rose-950/40 border-rose-600/50 hover:border-rose-500' 
+          : 'bg-slate-950 border-slate-800 hover:border-slate-700'
     }`}>
       <div className="flex justify-between items-center px-1 gap-3">
         <div className="flex items-center gap-2 min-w-0">
@@ -304,16 +308,16 @@ const SortableProcessCard = (props: any) => {
   } = useSortable({ id: props.item.id });
 
   const style = {
-    transform: CSS.Transform.toString(transform),
+    transform: CSS.Translate.toString(transform),
     transition,
-    zIndex: isDragging ? 100 : undefined,
-    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 0 : undefined,
+    opacity: isDragging ? 0 : 1,
   };
 
   return (
-    <div ref={setNodeRef} style={style} className="relative group">
+    <div ref={setNodeRef} style={style} className="relative">
       <div {...attributes} {...listeners} className="touch-none">
-        <ProcessCard {...props} />
+        <ProcessCard {...props} isDragging={isDragging} />
       </div>
     </div>
   );
@@ -341,8 +345,8 @@ export const ProcessView: React.FC<Props> = ({ subView, items, inventory, onUpda
     })
   );
 
-  const handleDragStart = (event: any) => {
-    setActiveId(event.active.id);
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveId(event.active.id as string);
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -487,47 +491,49 @@ export const ProcessView: React.FC<Props> = ({ subView, items, inventory, onUpda
   };
 
   return (
-    <div className={`grid grid-cols-1 ${subView === 'all' ? 'lg:grid-cols-2' : 'lg:grid-cols-1'} gap-4`}>
-      {filteredSections.map(sec => {
-        const sectionItems = items.filter(i => i.section === sec.key);
+    <>
+      <DndContext 
+        sensors={sensors}
+      collisionDetection={closestCenter}
+      modifiers={[restrictToVerticalAxis, restrictToWindowEdges]}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setActiveId(null)}
+    >
+      <div className={`grid grid-cols-1 ${subView === 'all' ? 'lg:grid-cols-2' : 'lg:grid-cols-1'} gap-4`}>
+        {filteredSections.map(sec => {
+          const sectionItems = items.filter(i => i.section === sec.key);
 
-        return (
-          <div key={sec.key} className="bg-slate-900/50 border border-slate-800 rounded-[32px] p-4 flex flex-col overflow-hidden shadow-xl backdrop-blur-sm">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl font-black text-white flex items-center gap-2">
-                <div className={`w-3 h-3 rounded-full ${sec.color} shadow-lg shadow-${sec.color.split('-')[1]}-500/40`}></div>
-                {sec.label}
-                <span className="text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded uppercase font-black tracking-widest">
-                  {sectionItems.length}
-                </span>
-              </h3>
-              <div className="flex gap-2">
-                {sec.key === 'packaging' && (
+          return (
+            <div key={sec.key} className="bg-slate-900/50 border border-slate-800 rounded-[32px] p-4 flex flex-col overflow-hidden shadow-xl backdrop-blur-sm">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-black text-white flex items-center gap-2">
+                  <div className={`w-3 h-3 rounded-full ${sec.color} shadow-lg shadow-${sec.color.split('-')[1]}-500/40`}></div>
+                  {sec.label}
+                  <span className="text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded uppercase font-black tracking-widest">
+                    {sectionItems.length}
+                  </span>
+                </h3>
+                <div className="flex gap-2">
+                  {sec.key === 'packaging' && (
+                    <button 
+                      onClick={() => setHistoryModalOpen(true)}
+                      className="p-2.5 bg-slate-800 text-slate-400 rounded-xl hover:bg-slate-700 hover:text-white transition-all shadow-lg active:scale-95 border border-slate-700"
+                      title="查看歷史入庫紀錄"
+                    >
+                      <Icons.Calendar />
+                    </button>
+                  )}
                   <button 
-                    onClick={() => setHistoryModalOpen(true)}
-                    className="p-2.5 bg-slate-800 text-slate-400 rounded-xl hover:bg-slate-700 hover:text-white transition-all shadow-lg active:scale-95 border border-slate-700"
-                    title="查看歷史入庫紀錄"
+                    onClick={() => handleOpenAdd(sec.key)} 
+                    className="p-2.5 bg-slate-800 text-slate-400 rounded-xl hover:bg-blue-600 hover:text-white transition-all shadow-lg active:scale-95 border border-slate-700"
                   >
-                    <Icons.Calendar />
+                    <Icons.Plus />
                   </button>
-                )}
-                <button 
-                  onClick={() => handleOpenAdd(sec.key)} 
-                  className="p-2.5 bg-slate-800 text-slate-400 rounded-xl hover:bg-blue-600 hover:text-white transition-all shadow-lg active:scale-95 border border-slate-700"
-                >
-                  <Icons.Plus />
-                </button>
+                </div>
               </div>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto space-y-4 pr-2 scrollbar-hide">
-              <DndContext 
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragStart={handleDragStart}
-                onDragEnd={handleDragEnd}
-                onDragCancel={() => setActiveId(null)}
-              >
+              
+              <div className="flex-1 overflow-y-auto space-y-4 pr-2 scrollbar-hide">
                 <SortableContext 
                   items={sectionItems.map(i => i.id)}
                   strategy={verticalListSortingStrategy}
@@ -549,47 +555,48 @@ export const ProcessView: React.FC<Props> = ({ subView, items, inventory, onUpda
                     />
                   ))}
                 </SortableContext>
-
-                <DragOverlay dropAnimation={{
-                  sideEffects: defaultDropAnimationSideEffects({
-                    styles: {
-                      active: {
-                        opacity: '0.5',
-                      },
-                    },
-                  }),
-                }}>
-                  {activeId ? (
-                    <div className="w-full opacity-90 scale-105 shadow-2xl">
-                      <ProcessCard 
-                        item={items.find(i => i.id === activeId)} 
-                        section={items.find(i => i.id === activeId)?.section}
-                        inventory={inventory}
-                        // 預覽不需要事件
-                        onTransferClick={() => {}}
-                        onPutClick={() => {}}
-                        onDelete={() => {}}
-                        onUpdate={() => {}}
-                        onUpdateNote={() => {}}
-                        onUpdateFormula={() => {}}
-                        onTogglePreparing={() => {}}
-                        onOpenDateSelector={() => {}}
-                      />
-                    </div>
-                  ) : null}
-                </DragOverlay>
-              </DndContext>
-              {sectionItems.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-20 opacity-20 border-2 border-dashed border-slate-800 rounded-[32px]">
-                  <p className="text-xs font-black uppercase tracking-widest">目前無待處理項</p>
-                </div>
-              )}
+                {sectionItems.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-20 opacity-20 border-2 border-dashed border-slate-800 rounded-[32px]">
+                    <p className="text-xs font-black uppercase tracking-widest">目前無待處理項</p>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
 
-      {/* 歷史紀錄 Modal */}
+      <DragOverlay dropAnimation={{
+        sideEffects: defaultDropAnimationSideEffects({
+          styles: {
+            active: {
+              opacity: '0',
+            },
+          },
+        }),
+      }}>
+        {activeId ? (
+          <div className="w-full shadow-2xl pointer-events-none">
+            <ProcessCard 
+              item={items.find(i => i.id === activeId)} 
+              section={items.find(i => i.id === activeId)?.section}
+              inventory={inventory}
+              isDragging={true}
+              onTransferClick={() => {}}
+              onPutClick={() => {}}
+              onDelete={() => {}}
+              onUpdate={() => {}}
+              onUpdateNote={() => {}}
+              onUpdateFormula={() => {}}
+              onTogglePreparing={() => {}}
+              onOpenDateSelector={() => {}}
+            />
+          </div>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
+
+    {/* 歷史紀錄 Modal */}
       {historyModalOpen && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[120] flex items-center justify-center p-4 sm:p-6 animate-in fade-in duration-300 overflow-y-auto">
           <div className="bg-slate-900 border border-slate-800 p-6 sm:p-10 rounded-[32px] sm:rounded-[48px] w-full max-w-2xl shadow-2xl animate-in zoom-in-95 duration-300 my-auto">
@@ -892,6 +899,6 @@ export const ProcessView: React.FC<Props> = ({ subView, items, inventory, onUpda
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
