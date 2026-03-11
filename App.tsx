@@ -286,7 +286,7 @@ export default function App() {
           setProcessItems(procData);
           const syncedIds = new Set<string>();
           procData.forEach((item: any) => {
-            if (item.section !== 'prep') syncedIds.add(item.id);
+            if (item.section !== 'prep' || item.isSyncedToParts) syncedIds.add(item.id);
           });
           syncedProcessItemsRef.current = syncedIds;
         }
@@ -325,10 +325,12 @@ export default function App() {
     if (!isInitialLoadComplete.current) return;
     const sync = async () => {
       try {
+        // 只同步數量大於 0 的項目
+        const activeFrames = doorFrames.filter(f => f.quantity > 0);
         await fetch('/api/door-frames/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: doorFrames })
+          body: JSON.stringify({ items: activeFrames })
         });
       } catch (error) {
         console.error('Failed to sync door frames:', error);
@@ -343,8 +345,8 @@ export default function App() {
     
     const groups: Record<string, DoorFrame[]> = {};
     doorFrames.forEach(f => {
-      // 如果是預備組且有備註，則不參與合併（使用唯一 key）
-      const key = (f.section === 'prep' && f.note) 
+      // 如果有備註，則不參與合併（使用唯一 key）
+      const key = f.note 
         ? `unique-${f.id}` 
         : `${f.sku}-${f.name}-${f.category}-${f.section}`;
       if (!groups[key]) groups[key] = [];
@@ -356,6 +358,7 @@ export default function App() {
     const idsToDelete: string[] = [];
     
     Object.values(groups).forEach(group => {
+      let finalItem: DoorFrame | null = null;
       if (group.length > 1) {
         hasChanges = true;
         // 合併邏輯
@@ -372,9 +375,16 @@ export default function App() {
           }
         }
         merged.formula = merged.quantity.toString();
-        nextFrames.push(merged);
+        finalItem = merged;
       } else {
-        nextFrames.push(group[0]);
+        finalItem = group[0];
+      }
+
+      if (finalItem && finalItem.quantity > 0) {
+        nextFrames.push(finalItem);
+      } else if (finalItem) {
+        hasChanges = true;
+        idsToDelete.push(finalItem.id);
       }
     });
     
@@ -487,15 +497,16 @@ export default function App() {
     let hasNewParts = false;
     const newParts: DoorFrame[] = [];
     const updatedQtyMap = new Map<string, { quantity: number; note?: string }>();
+    const newlySyncedIds: string[] = [];
 
     processItems.forEach(item => {
       const label = getProductLabel(item.name);
       if (label === '抽屜' || label === '加框') {
         // 如果是新項目，則新增
-        if (item.section === 'prep' && !syncedProcessItemsRef.current.has(item.id)) {
+        if (item.section === 'prep' && !syncedProcessItemsRef.current.has(item.id) && !item.isSyncedToParts) {
           const invItem = inventory.find(i => i.id === item.inventoryId);
           const newPart: DoorFrame = {
-            id: `df-${Date.now()}-${Math.random()}`,
+            id: `df-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             sku: invItem?.sku || '',
             name: item.name,
             category: label === '抽屜' ? 'drawer' : 'door',
@@ -512,6 +523,7 @@ export default function App() {
           };
           newParts.push(newPart);
           syncedProcessItemsRef.current.add(item.id);
+          newlySyncedIds.push(item.id);
           hasNewParts = true;
         } else {
           // 記錄已存在項目的最新數量和備註
@@ -521,6 +533,10 @@ export default function App() {
     });
 
     if (hasNewParts || updatedQtyMap.size > 0) {
+      if (newlySyncedIds.length > 0) {
+        setProcessItems(prev => prev.map(p => newlySyncedIds.includes(p.id) ? { ...p, isSyncedToParts: true } : p));
+      }
+
       setDoorFrames(current => {
         let changed = false;
         let next = current.map(df => {
@@ -875,15 +891,15 @@ export default function App() {
               doorFrames={doorFrames}
               inventory={inventory}
               onAdd={(f) => {
-                const id = `df-${Date.now()}`;
-                setDoorFrames([...doorFrames, { ...f, id, section: 'prep' }]);
+                const id = `df-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                setDoorFrames(prev => [...prev, { ...f, id, section: 'prep' }]);
               }}
-              onUpdate={(f) => setDoorFrames(doorFrames.map(df => df.id === f.id ? f : df))}
+              onUpdate={(f) => setDoorFrames(prev => prev.map(df => df.id === f.id ? f : df))}
               onDelete={(id) => {
                 fetch(`/api/door-frames/${id}`, { method: 'DELETE' }).catch(err => console.error(err));
-                setDoorFrames(doorFrames.filter(df => df.id !== id));
+                setDoorFrames(prev => prev.filter(df => df.id !== id));
               }}
-              onQuickUpdate={(id, delta) => setDoorFrames(doorFrames.map(df => df.id === id ? { ...df, quantity: Math.max(0, df.quantity + delta) } : df))}
+              onQuickUpdate={(id, delta) => setDoorFrames(prev => prev.map(df => df.id === id ? { ...df, quantity: Math.max(0, df.quantity + delta) } : df))}
               onMovePart={handlePartMove}
               onSplitPart={handlePartSplit}
               onInventoryPut={handlePartToInventory}

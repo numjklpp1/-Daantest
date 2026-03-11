@@ -46,8 +46,12 @@ async function initDb() {
         formula TEXT,
         is_preparing BOOLEAN,
         created_at TEXT,
-        target_date TEXT
+        target_date TEXT,
+        is_synced_to_parts BOOLEAN DEFAULT FALSE
       );
+    `;
+    await sql`
+      ALTER TABLE process_items ADD COLUMN IF NOT EXISTS is_synced_to_parts BOOLEAN DEFAULT FALSE;
     `;
     await sql`
       CREATE TABLE IF NOT EXISTS door_frames (
@@ -114,7 +118,8 @@ app.get("/api/process-items", async (req, res) => {
       formula: row.formula,
       isPreparing: row.is_preparing,
       createdAt: row.created_at,
-      targetDate: row.target_date
+      targetDate: row.target_date,
+      isSyncedToParts: row.is_synced_to_parts
     }));
     res.json(items);
   } catch (error) {
@@ -129,8 +134,8 @@ app.post("/api/process-items/sync", async (req, res) => {
     // UPSERT is better
     for (const item of items) {
       await sql`
-        INSERT INTO process_items (id, inventory_id, name, quantity, section, note, formula, is_preparing, created_at, target_date)
-        VALUES (${item.id}, ${item.inventoryId}, ${item.name}, ${item.quantity}, ${item.section}, ${item.note}, ${item.formula}, ${item.isPreparing}, ${item.createdAt}, ${item.targetDate})
+        INSERT INTO process_items (id, inventory_id, name, quantity, section, note, formula, is_preparing, created_at, target_date, is_synced_to_parts)
+        VALUES (${item.id}, ${item.inventoryId}, ${item.name}, ${item.quantity}, ${item.section}, ${item.note}, ${item.formula}, ${item.isPreparing}, ${item.createdAt}, ${item.targetDate}, ${item.isSyncedToParts || false})
         ON CONFLICT (id) DO UPDATE SET
           inventory_id = EXCLUDED.inventory_id,
           name = EXCLUDED.name,
@@ -140,7 +145,8 @@ app.post("/api/process-items/sync", async (req, res) => {
           formula = EXCLUDED.formula,
           is_preparing = EXCLUDED.is_preparing,
           created_at = EXCLUDED.created_at,
-          target_date = EXCLUDED.target_date;
+          target_date = EXCLUDED.target_date,
+          is_synced_to_parts = EXCLUDED.is_synced_to_parts;
       `;
     }
     res.json({ success: true });
